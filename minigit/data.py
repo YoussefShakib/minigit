@@ -23,3 +23,21 @@ def get_object(oid: str, expected: str | None = "blob") -> bytes:
     if expected is not None and type_.decode() != expected:
         raise ValueError(f"expected {expected}, got {type_.decode()}")
     return content
+
+
+def write_tree(directory: str = ".") -> str:
+    entries = []
+    with os.scandir(directory) as it:
+        for entry in sorted(it, key=lambda e: e.name):
+            if entry.name in (GIT_DIR, ".venv", ".git", "__pycache__"):
+                continue
+            path = os.path.join(directory, entry.name)
+            if entry.is_file(follow_symlinks=False):
+                with open(path, "rb") as f:
+                    oid = hash_object(f.read(), "blob")
+                entries.append(("blob", oid, entry.name))
+            elif entry.is_dir(follow_symlinks=False):
+                oid = write_tree(path)
+                entries.append(("tree", oid, entry.name))
+    tree = "".join(f"{t} {o} {n}\n" for t, o, n in entries).encode()
+    return hash_object(tree, "tree")
