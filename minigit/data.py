@@ -1,7 +1,10 @@
 import hashlib
 import os
+from collections import namedtuple
 
 GIT_DIR = ".minigit"
+IGNORED = {GIT_DIR, ".venv", ".git", "__pycache__", ".pytest_cache", ".ruff_cache"}
+
 
 
 def init():
@@ -29,7 +32,7 @@ def write_tree(directory: str = ".") -> str:
     entries = []
     with os.scandir(directory) as it:
         for entry in sorted(it, key=lambda e: e.name):
-            if entry.name in (GIT_DIR, ".venv", ".git", "__pycache__"):
+            if entry.name in IGNORED:   
                 continue
             path = os.path.join(directory, entry.name)
             if entry.is_file(follow_symlinks=False):
@@ -41,3 +44,85 @@ def write_tree(directory: str = ".") -> str:
                 entries.append(("tree", oid, entry.name))
     tree = "".join(f"{t} {o} {n}\n" for t, o, n in entries).encode()
     return hash_object(tree, "tree")
+
+
+def set_HEAD(oid: str) -> None:
+    with open(os.path.join(GIT_DIR, "HEAD"), "w") as f:
+        f.write(oid)
+
+
+def get_HEAD() -> str | None:
+    path = os.path.join(GIT_DIR, "HEAD")
+    if os.path.isfile(path):
+        with open(path) as f:
+            return f.read().strip()
+    return None
+
+
+def commit(message: str) -> str:
+    text = f"tree {write_tree()}\n"
+    head = get_HEAD()
+    if head:
+        text += f"parent {head}\n"
+    text += f"\n{message}\n"
+    oid = hash_object(text.encode(), "commit")
+    set_HEAD(oid)
+    return oid
+
+
+Commit = namedtuple("Commit", ["tree", "parent", "message"])
+
+
+def get_commit(oid: str) -> Commit:
+    raw = get_object(oid, "commit").decode()
+    header, _, message = raw.partition("\n\n")
+    tree = parent = None
+    for line in header.splitlines():
+        key, _, value = line.partition(" ")
+        if key == "tree":
+            tree = value
+        elif key == "parent":
+            parent = value
+    return Commit(tree, parent, message.strip())
+
+
+def _tree_entries(oid: str):
+    text = get_object(oid, "tree").decode()
+    for line in text.splitlines():
+        type_, entry_oid, name = line.split(" ", 2)
+        yield type_, entry_oid, name
+
+
+def get_tree(oid: str, base: str = "") -> dict[str, str]:
+    result = {}
+    for type_, entry_oid, name in _tree_entries(oid):
+        path = base + name
+        if type_ == "blob":
+            result[path] = entry_oid
+        else:
+            result.update(get_tree(entry_oid, path + "/"))
+    return result
+
+
+def _empty_directory(directory: str = ".") -> None:
+    with os.scandir(directory) as it:
+        entries = list(it)
+    for e in entries:
+        if e.name in IGNORED:
+            continue
+        if e.is_dir(follow_symlinks=False):
+            _empty_directory(e.path)
+            try:
+                os.rmdir(e.path)
+            except OSError:
+                pass
+        else:
+            os.remove(e.path)
+
+
+def read_tree(tree_oid: str) -> None:
+    _empty_directory()
+    for path, oid in get_tree(tree_oid).items():
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(get_object(oid))
