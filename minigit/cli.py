@@ -16,6 +16,8 @@ def main():
     p = sub.add_parser("cat-file")
     p.add_argument("oid")
 
+    sub.add_parser("write-tree")
+
     p = sub.add_parser("commit")
     p.add_argument("-m", "--message", required=True)
 
@@ -33,6 +35,9 @@ def main():
     p.add_argument("name", nargs="?")
     p.add_argument("oid", nargs="?", default="HEAD")
 
+    p = sub.add_parser("merge")
+    p.add_argument("other")
+
     args = parser.parse_args()
 
     if args.command == "init":
@@ -44,10 +49,12 @@ def main():
     elif args.command == "cat-file":
         sys.stdout.flush()
         sys.stdout.buffer.write(data.get_object(args.oid, expected=None))
+    elif args.command == "write-tree":
+        print(data.write_tree())
     elif args.command == "commit":
         print(data.commit(args.message))
     elif args.command == "log":
-        oid = data.resolve(args.oid) if hasattr(args, "oid") else data.get_HEAD()
+        oid = data.resolve(args.oid)
         while oid:
             c = data.get_commit(oid)
             print(f"commit {oid}\n\n    {c.message}\n")
@@ -70,3 +77,16 @@ def main():
                 print(f"{'*' if b == current else ' '} {b}")
         else:
             data.create_branch(args.name, data.resolve(args.oid))
+    elif args.command == "merge":
+        conflicts = data.merge(data.resolve(args.other))
+        if conflicts:
+            print("Merge finished with conflicts in:")
+            for path in conflicts:
+                print(f"  {path}")
+            print("Fix the files, then run: minigit commit -m 'Merge'")
+        else:
+            print("Merged cleanly. Run: minigit commit -m 'Merge'")
+
+
+if __name__ == "__main__":
+    main()

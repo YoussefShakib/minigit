@@ -195,3 +195,81 @@ def read_tree(tree_oid: str) -> None:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         with open(path, "wb") as f:
             f.write(get_object(oid))
+
+# ---- merge ----
+
+
+def merge_base(a: str, b: str) -> str | None:
+    ancestors = set()
+    oid = a
+    while oid:
+        ancestors.add(oid)
+        oid = get_commit(oid).parent
+    oid = b
+    while oid:
+        if oid in ancestors:
+            return oid
+        oid = get_commit(oid).parent
+    return None
+
+
+def _blob(oid: str | None) -> bytes | None:
+    return get_object(oid) if oid else None
+
+
+def merge_contents(
+    base: bytes | None, ours: bytes | None, theirs: bytes | None
+) -> tuple[bytes | None, bool]:
+    if ours == theirs:
+        return ours, False
+    if base == ours:
+        return theirs, False
+    if base == theirs:
+        return ours, False
+    ours_text = ours or b""
+    theirs_text = theirs or b""
+    if ours_text and not ours_text.endswith(b"\n"):
+        ours_text += b"\n"
+    if theirs_text and not theirs_text.endswith(b"\n"):
+        theirs_text += b"\n"
+    merged = (
+        b"<<<<<<< ours\n" + ours_text + b"=======\n" + theirs_text + b">>>>>>> theirs\n"
+    )
+    return merged, True
+
+
+def merge(other_oid: str) -> list[str]:
+    head = get_HEAD()
+    base = merge_base(head, other_oid)
+
+    if base == other_oid:
+        return []  # already up to date
+
+    if base == head:  # fast-forward
+        read_tree(get_commit(other_oid).tree)
+        move_HEAD(other_oid)
+        return []
+
+    base_tree = get_tree(get_commit(base).tree) if base else {}
+    our_tree = get_tree(get_commit(head).tree)
+    their_tree = get_tree(get_commit(other_oid).tree)
+
+    result = {}
+    conflicts = []
+    for path in sorted(set(base_tree) | set(our_tree) | set(their_tree)):
+        content, conflict = merge_contents(
+            _blob(base_tree.get(path)),
+            _blob(our_tree.get(path)),
+            _blob(their_tree.get(path)),
+        )
+        if conflict:
+            conflicts.append(path)
+        if content is not None:
+            result[path] = content
+
+    _empty_directory()
+    for path, content in result.items():
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(content)
+    return conflicts

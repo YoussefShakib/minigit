@@ -83,3 +83,68 @@ def test_tag_resolves_to_commit(tmp_path, monkeypatch):
     first = data.commit("first")
     data.create_tag("v1", first)
     assert data.resolve("v1") == first
+
+def _switch(branch: str, commit_oid: str):
+    data.read_tree(data.get_commit(commit_oid).tree)
+    data.set_HEAD(branch, symbolic=True)
+
+
+def test_merge_without_conflict(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    data.init()
+    (tmp_path / "a.txt").write_text("1")
+    (tmp_path / "b.txt").write_text("1")
+    base = data.commit("base")
+    data.create_branch("feature", base)
+
+    (tmp_path / "a.txt").write_text("2")
+    main_tip = data.commit("change a on main")
+
+    _switch("feature", base)
+    (tmp_path / "b.txt").write_text("2")
+    data.commit("change b on feature")
+
+    conflicts = data.merge(main_tip)
+
+    assert conflicts == []
+    assert (tmp_path / "a.txt").read_text() == "2"
+    assert (tmp_path / "b.txt").read_text() == "2"
+
+
+def test_merge_conflict_writes_markers(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    data.init()
+    (tmp_path / "a.txt").write_text("base")
+    base = data.commit("base")
+    data.create_branch("feature", base)
+
+    (tmp_path / "a.txt").write_text("main version")
+    main_tip = data.commit("main change")
+
+    _switch("feature", base)
+    (tmp_path / "a.txt").write_text("feature version")
+    data.commit("feature change")
+
+    conflicts = data.merge(main_tip)
+
+    assert conflicts == ["a.txt"]
+    text = (tmp_path / "a.txt").read_text()
+    assert "<<<<<<< ours" in text
+    assert "main version" in text
+    assert "feature version" in text
+
+
+def test_merge_fast_forward(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    data.init()
+    (tmp_path / "a.txt").write_text("1")
+    first = data.commit("first")
+    (tmp_path / "a.txt").write_text("2")
+    second = data.commit("second")
+
+    data.set_ref("refs/heads/main", first)
+    data.read_tree(data.get_commit(first).tree)
+
+    assert data.merge(second) == []
+    assert (tmp_path / "a.txt").read_text() == "2"
+    assert data.get_HEAD() == second
