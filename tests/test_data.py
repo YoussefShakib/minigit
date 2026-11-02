@@ -61,3 +61,25 @@ def test_checkout_removes_files_not_in_commit(tmp_path, monkeypatch):
     data.read_tree(data.get_commit(first).tree)
 
     assert not (tmp_path / "b.txt").exists()
+
+def test_branch_moves_with_commits(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    data.init()
+    (tmp_path / "a.txt").write_text("1")
+    first = data.commit("first")
+    data.create_branch("feature", first)
+    (tmp_path / "a.txt").write_text("2")
+    second = data.commit("second")
+
+    assert data.current_branch() == "main"
+    assert data.get_ref("refs/heads/main") == second
+    assert data.get_ref("refs/heads/feature") == first
+
+
+def test_tag_resolves_to_commit(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    data.init()
+    (tmp_path / "a.txt").write_text("1")
+    first = data.commit("first")
+    data.create_tag("v1", first)
+    assert data.resolve("v1") == first

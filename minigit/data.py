@@ -6,9 +6,9 @@ GIT_DIR = ".minigit"
 IGNORED = {GIT_DIR, ".venv", ".git", "__pycache__", ".pytest_cache", ".ruff_cache"}
 
 
-
 def init():
     os.makedirs(os.path.join(GIT_DIR, "objects"), exist_ok=True)
+    set_HEAD("main", symbolic=True)
 
 
 def hash_object(data: bytes, type_: str = "blob") -> str:
@@ -32,7 +32,7 @@ def write_tree(directory: str = ".") -> str:
     entries = []
     with os.scandir(directory) as it:
         for entry in sorted(it, key=lambda e: e.name):
-            if entry.name in IGNORED:   
+            if entry.name in IGNORED:
                 continue
             path = os.path.join(directory, entry.name)
             if entry.is_file(follow_symlinks=False):
@@ -46,17 +46,86 @@ def write_tree(directory: str = ".") -> str:
     return hash_object(tree, "tree")
 
 
-def set_HEAD(oid: str) -> None:
+# ---- refs, HEAD, branches, tags ----
+
+
+def set_HEAD(value: str, symbolic: bool = False) -> None:
+    text = f"ref: refs/heads/{value}" if symbolic else value
     with open(os.path.join(GIT_DIR, "HEAD"), "w") as f:
-        f.write(oid)
+        f.write(text)
 
 
-def get_HEAD() -> str | None:
+def _read_HEAD() -> str | None:
     path = os.path.join(GIT_DIR, "HEAD")
     if os.path.isfile(path):
         with open(path) as f:
             return f.read().strip()
     return None
+
+
+def current_branch() -> str | None:
+    head = _read_HEAD()
+    if head and head.startswith("ref: refs/heads/"):
+        return head[len("ref: refs/heads/"):]
+    return None
+
+
+def get_ref(path: str) -> str | None:
+    full = os.path.join(GIT_DIR, path)
+    if os.path.isfile(full):
+        with open(full) as f:
+            return f.read().strip()
+    return None
+
+
+def set_ref(path: str, oid: str) -> None:
+    full = os.path.join(GIT_DIR, path)
+    os.makedirs(os.path.dirname(full), exist_ok=True)
+    with open(full, "w") as f:
+        f.write(oid)
+
+
+def get_HEAD() -> str | None:
+    branch = current_branch()
+    if branch:
+        return get_ref(f"refs/heads/{branch}")
+    return _read_HEAD()
+
+
+def move_HEAD(oid: str) -> None:
+    branch = current_branch()
+    if branch:
+        set_ref(f"refs/heads/{branch}", oid)
+    else:
+        set_HEAD(oid)
+
+
+def resolve(name: str) -> str:
+    if name == "HEAD":
+        return get_HEAD()
+    for prefix in ("", "refs/tags/", "refs/heads/"):
+        oid = get_ref(prefix + name)
+        if oid:
+            return oid
+    return name
+
+
+def create_tag(name: str, oid: str) -> None:
+    set_ref(f"refs/tags/{name}", oid)
+
+
+def create_branch(name: str, oid: str) -> None:
+    set_ref(f"refs/heads/{name}", oid)
+
+
+def list_branches() -> list[str]:
+    path = os.path.join(GIT_DIR, "refs", "heads")
+    return sorted(os.listdir(path)) if os.path.isdir(path) else []
+
+
+# ---- commits ----
+
+Commit = namedtuple("Commit", ["tree", "parent", "message"])
 
 
 def commit(message: str) -> str:
@@ -66,11 +135,8 @@ def commit(message: str) -> str:
         text += f"parent {head}\n"
     text += f"\n{message}\n"
     oid = hash_object(text.encode(), "commit")
-    set_HEAD(oid)
+    move_HEAD(oid)
     return oid
-
-
-Commit = namedtuple("Commit", ["tree", "parent", "message"])
 
 
 def get_commit(oid: str) -> Commit:
@@ -84,6 +150,9 @@ def get_commit(oid: str) -> Commit:
         elif key == "parent":
             parent = value
     return Commit(tree, parent, message.strip())
+
+
+# ---- reading trees back / checkout ----
 
 
 def _tree_entries(oid: str):
