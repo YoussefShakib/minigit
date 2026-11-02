@@ -238,7 +238,7 @@ def merge_contents(
     return merged, True
 
 
-def merge(other_oid: str) -> list[str]:
+def merge(other_oid: str, on_conflict=None) -> list[str]:
     head = get_HEAD()
     base = merge_base(head, other_oid)
 
@@ -257,13 +257,14 @@ def merge(other_oid: str) -> list[str]:
     result = {}
     conflicts = []
     for path in sorted(set(base_tree) | set(our_tree) | set(their_tree)):
-        content, conflict = merge_contents(
-            _blob(base_tree.get(path)),
-            _blob(our_tree.get(path)),
-            _blob(their_tree.get(path)),
-        )
+        base_blob = _blob(base_tree.get(path))
+        our_blob = _blob(our_tree.get(path))
+        their_blob = _blob(their_tree.get(path))
+        content, conflict = merge_contents(base_blob, our_blob, their_blob)
         if conflict:
             conflicts.append(path)
+            if on_conflict:
+                on_conflict(path, base_blob, our_blob, their_blob)
         if content is not None:
             result[path] = content
 

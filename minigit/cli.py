@@ -1,7 +1,7 @@
 import argparse
 import sys
 
-from minigit import data
+from minigit import data, llm
 
 
 def main():
@@ -37,6 +37,7 @@ def main():
 
     p = sub.add_parser("merge")
     p.add_argument("other")
+    p.add_argument("--suggest", action="store_true")
 
     args = parser.parse_args()
 
@@ -78,11 +79,24 @@ def main():
         else:
             data.create_branch(args.name, data.resolve(args.oid))
     elif args.command == "merge":
-        conflicts = data.merge(data.resolve(args.other))
+        suggestions = {}
+
+        def collect(path, base, ours, theirs):
+            if not args.suggest:
+                return
+            try:
+                suggestions[path] = llm.suggest_resolution(path, base, ours, theirs)
+            except RuntimeError as e:
+                print(f"No suggestion for {path}: {e}")
+
+        conflicts = data.merge(data.resolve(args.other), on_conflict=collect)
         if conflicts:
             print("Merge finished with conflicts in:")
             for path in conflicts:
                 print(f"  {path}")
+            for path, text in suggestions.items():
+                print(f"\n--- Suggested resolution for {path} (not applied) ---")
+                print(text)
             print("Fix the files, then run: minigit commit -m 'Merge'")
         else:
             print("Merged cleanly. Run: minigit commit -m 'Merge'")

@@ -1,4 +1,4 @@
-from minigit import data
+from minigit import data, llm
 
 
 def test_round_trip(tmp_path, monkeypatch):
@@ -148,3 +148,30 @@ def test_merge_fast_forward(tmp_path, monkeypatch):
     assert data.merge(second) == []
     assert (tmp_path / "a.txt").read_text() == "2"
     assert data.get_HEAD() == second
+
+    from minigit import llm
+
+
+def test_prompt_contains_all_three_versions():
+    prompt = llm.build_prompt("a.txt", b"base text", b"our text", b"their text")
+    assert "base text" in prompt
+    assert "our text" in prompt
+    assert "their text" in prompt
+
+
+def test_on_conflict_callback_receives_versions(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    data.init()
+    (tmp_path / "a.txt").write_text("base")
+    base = data.commit("base")
+    data.create_branch("feature", base)
+    (tmp_path / "a.txt").write_text("main version")
+    main_tip = data.commit("main change")
+    _switch("feature", base)
+    (tmp_path / "a.txt").write_text("feature version")
+    data.commit("feature change")
+
+    seen = []
+    data.merge(main_tip, on_conflict=lambda *args: seen.append(args))
+
+    assert seen == [("a.txt", b"base", b"feature version", b"main version")]
