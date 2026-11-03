@@ -149,7 +149,6 @@ def test_merge_fast_forward(tmp_path, monkeypatch):
     assert (tmp_path / "a.txt").read_text() == "2"
     assert data.get_HEAD() == second
 
-    from minigit import llm
 
 
 def test_prompt_contains_all_three_versions():

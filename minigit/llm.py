@@ -1,5 +1,6 @@
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 
@@ -64,11 +65,19 @@ def suggest_resolution(
             "User-Agent": "minigit/0.1",
         },
     )
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            reply = json.load(response)
-    except urllib.error.HTTPError as e:
-        raise RuntimeError(f"API error {e.code}: {e.read().decode()[:200]}") from e
-    except urllib.error.URLError as e:
-        raise RuntimeError(f"network error: {e.reason}") from e
-    return _strip_fences(reply["choices"][0]["message"]["content"])
+    last_error = "unknown error"
+    for attempt in range(4):
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response:
+                reply = json.load(response)
+            return _strip_fences(reply["choices"][0]["message"]["content"])
+        except urllib.error.HTTPError as e:
+            last_error = f"API error {e.code}: {e.read().decode()[:200]}"
+            if e.code not in (429, 500, 502, 503, 504):
+                break
+        except urllib.error.URLError as e:
+            last_error = f"network error: {e.reason}"
+        except TimeoutError:
+            last_error = "the API did not answer in time"
+        time.sleep(2 * (attempt + 1))
+    raise RuntimeError(last_error)
